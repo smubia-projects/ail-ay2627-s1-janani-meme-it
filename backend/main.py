@@ -52,64 +52,23 @@ MAX_PREVIOUS_CAPTIONS = 60
 # ============================================================
 # FASTAPI
 # ============================================================
-app = FastAPI(
+app = FastAPI(title="Meme-it API", version="0.9.0")
 
-
-
-    title="Meme-it API",
-
-
-
-    version="0.8.0",
-
-
-
-)
-
-
-
-
-
-
+# Comma-separated frontend origins, e.g. the Vercel URL. Defaults to the
+# local Vite dev server.
+CORS_ORIGINS = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",")
+    if origin.strip()
+]
 
 app.add_middleware(
-
-
-
     CORSMiddleware,
-
-
-
-allow_origins=[
-    "http://localhost:5173",
-    "http://localhost:5174",
-    "https://meme-it-beta.vercel.app",
-    "https://meme-jl0tvagdc-janani-7253.vercel.app",
-],
-
-
+    allow_origins=CORS_ORIGINS,
     allow_credentials=False,
-
-
-
     allow_methods=["GET", "POST"],
-
-
-
     allow_headers=["*"],
-
-
-
 )
-
-
-
-
-
-
-
-
-
 
 
 # ============================================================
@@ -2448,7 +2407,7 @@ def home():
     return {"message": "Meme-it backend is running!"}
 
 
-@app.get("/health")
+@app.get("/api/health")
 def health():
     return {
         "status": "ok",
