@@ -1,90 +1,17 @@
-
-
-
-
 import base64
-
-
-
-import hashlib
-
-
-
 import json
-
-
-
 import os
-
-
-
 import secrets
-
-
-
-import sqlite3
-
-
-
-import threading
-
-
-
-
-
-
-
 from io import BytesIO
-
-
-
 from pathlib import Path
 
-from typing import Optional
-
-from pydantic import BaseModel
-
-import personalization as personalization_db
-
-
-
-
-
-
-
 import requests
-
-
-
 from dotenv import load_dotenv
-
-
-
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
-
-
-
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
-
-
-
 from fastapi.responses import StreamingResponse
-
-
-
 from PIL import Image, ImageOps, UnidentifiedImageError
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 
@@ -92,174 +19,30 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 # CONFIGURATION
 # ============================================================
 BASE_DIR = Path(__file__).resolve().parent
-
-
-
 load_dotenv(BASE_DIR / ".env")
 
-
-
-
-
-
-
 APIYI_API_KEY = os.getenv("APIYI_API_KEY", "").strip()
-
-
-
-
-
-
-
-APIYI_MODEL = os.getenv(
-
-
-
-    "APIYI_MODEL",
-
-
-
-    "gemini-3.1-flash-lite",
-
-
-
-).strip()
-
-
-
-
-
-
-
+APIYI_MODEL = os.getenv("APIYI_MODEL", "gemini-3.1-flash-lite").strip()
 APIYI_URL = "https://api.apiyi.com/v1/chat/completions"
 
-
-
-
-
-
-
 MAX_FILE_SIZE = 10 * 1024 * 1024
-
-
-
 MAX_PIXELS = 20_000_000
-
-
-
-
-
-
-
-ALLOWED_TYPES = {
-
-
-
-    "image/jpeg",
-
-
-
-    "image/png",
-
-
-
-    "image/webp",
-
-
-
-}
-
-
-
-
-
-
+ALLOWED_TYPES = {"image/jpeg", "image/png", "image/webp"}
 
 THEMES = {
-
-
-
     "Work",
-
-
-
     "Relationships",
-
-
-
     "Life",
-
-
-
     "Tech",
-
-
-
     "Surprise Me",
-
-
-
     "Custom Theme",
-
-
-
 }
-
-
-
-
-
-
-
-# Development allowance, NOT a provider billing limit.
-BUDGET_USD = 0.50
-
-
-
-RESERVATION_PER_REQUEST = 0.01
-
-
-
-
-
-
-
-DB_PATH = BASE_DIR / "caption_cache.sqlite3"
-
-
-
-
-
-
-
-# Changing this separates new results from old cache entries.
-PROMPT_VERSION = "photo-first-v7"
-
-
-
-
-
-
 
 # Maximum provider calls for one fresh generation.
 MAX_GENERATION_ATTEMPTS = 2
 
-
-
-
-
-
-
-db_lock = threading.Lock()
-
-
-
-
-
-
-
-
-
+# Captions the browser may send back so a fresh generation avoids repeats.
+MAX_PREVIOUS_CAPTIONS = 60
 
 
 # ============================================================
@@ -326,640 +109,29 @@ allow_origins=[
 
 
 # ============================================================
-# DATABASE
+# CAPTION HISTORY (stateless)
 # ============================================================
-def init_db():
-
-
-
-    with sqlite3.connect(DB_PATH) as db:
-
-
-
-        db.execute("""
-
-
-
-            CREATE TABLE IF NOT EXISTS captions (
-
-
-
-                cache_key TEXT PRIMARY KEY,
-
-
-
-                captions_json TEXT NOT NULL
-
-
-
-            )
-
-
-
-        """)
-
-
-
-
-
-
-
-        db.execute("""
-
-
-
-            CREATE TABLE IF NOT EXISTS spending (
-
-
-
-                id INTEGER PRIMARY KEY CHECK (id = 1),
-
-
-
-                reserved_usd REAL NOT NULL DEFAULT 0
-
-
-
-            )
-
-
-
-        """)
-
-
-
-
-
-
-
-        db.execute("""
-
-
-
-            INSERT OR IGNORE INTO spending
-
-
-
-            (id, reserved_usd)
-
-
-
-            VALUES (1, 0)
-
-
-
-        """)
-
-
-
-
-
-
-
-        # NEW: Remember captions previously generated
-        # for each photo and theme.
-        db.execute("""
-
-
-
-            CREATE TABLE IF NOT EXISTS caption_history (
-
-
-
-                cache_key TEXT NOT NULL,
-
-
-
-                caption_normalized TEXT NOT NULL,
-
-
-
-                caption_text TEXT NOT NULL,
-
-
-
-                PRIMARY KEY (
-
-
-
-                    cache_key,
-
-
-
-                    caption_normalized
-
-
-
-                )
-
-
-
-            )
-
-
-
-        """)
-
-
-
-
-
-
-
-
-
-
-
-init_db()
-
-
-
-
-
-
-
-
-
-
-
-def reserve_budget():
-
-
-
-    with db_lock:
-
-
-
-        with sqlite3.connect(DB_PATH) as db:
-
-
-
-            current = db.execute(
-
-
-
-                """
-
-
-
-                SELECT reserved_usd
-
-
-
-                FROM spending
-
-
-
-                WHERE id = 1
-
-
-
-                """
-
-
-
-            ).fetchone()[0]
-
-
-
-
-
-
-
-            if (
-
-
-
-                current + RESERVATION_PER_REQUEST
-
-
-
-                > BUDGET_USD + 1e-9
-
-
-
-            ):
-
-
-
-                raise HTTPException(
-
-
-
-                    status_code=429,
-
-
-
-                    detail=(
-
-
-
-                        "Development AI request limit reached. "
-
-
-
-                        "Check your spending allowance."
-
-
-
-                    ),
-
-
-
-                )
-
-
-
-
-
-
-
-            db.execute(
-
-
-
-                """
-
-
-
-                UPDATE spending
-
-
-
-                SET reserved_usd = ?
-
-
-
-                WHERE id = 1
-
-
-
-                """,
-
-
-
-                (
-
-
-
-                    current + RESERVATION_PER_REQUEST,
-
-
-
-                ),
-
-
-
-            )
-
-
-
-
-
-
-
-
-
-
-
-def get_cached_result(key):
-
-
-
-    with sqlite3.connect(DB_PATH) as db:
-
-
-
-        row = db.execute(
-
-
-
-            """
-
-
-
-            SELECT captions_json
-
-
-
-            FROM captions
-
-
-
-            WHERE cache_key = ?
-
-
-
-            """,
-
-
-
-            (key,),
-
-
-
-        ).fetchone()
-
-
-
-
-
-
-
-    if row is None:
-
-
-
-        return None
-
-
-
-
-
-
-
-    try:
-
-
-
-        result = json.loads(row[0])
-
-
-
-
-
-
-
-        if (
-
-
-
-            isinstance(result, dict)
-
-
-
-            and isinstance(result.get("people_count"), int)
-
-
-
-            and isinstance(result.get("people"), list)
-
-
-
-            and isinstance(result.get("memes"), list)
-
-
-
-            and len(result["memes"]) == 5
-
-
-
-            and isinstance(result.get("captions"), list)
-
-
-
-            and len(result["captions"]) == 5
-
-
-
-        ):
-
-
-
-            return result
-
-
-
-
-
-
-
-    except (ValueError, TypeError):
-
-
-
-        pass
-
-
-
-
-
-
-
-    return None
-
-
-
-
-
-
-
-
-
-
-
+# The API stores nothing. The browser remembers which captions it has already
+# shown for the current photo and sends them back on a fresh generation.
 def normalize_caption(caption):
-
-
-
     return " ".join(caption.casefold().split())
 
 
-
-
-
-
-
-
-
-
-
-def get_caption_history(key):
-
-
-
-    with sqlite3.connect(DB_PATH) as db:
-
-
-
-        rows = db.execute(
-
-
-
-            """
-
-
-
-            SELECT caption_text
-
-
-
-            FROM caption_history
-
-
-
-            WHERE cache_key = ?
-
-
-
-            ORDER BY rowid DESC
-
-
-
-            LIMIT 100
-
-
-
-            """,
-
-
-
-            (key,),
-
-
-
-        ).fetchall()
-
-
-
-
-
-
-
-    return [row[0] for row in rows]
-
-
-
-
-
-
-
-
-
-
-
-def save_cached_result(key, result):
-
-
-
-    with db_lock:
-
-
-
-        with sqlite3.connect(DB_PATH) as db:
-
-
-
-            db.execute(
-
-
-
-                """
-
-
-
-                INSERT OR REPLACE INTO captions
-
-
-
-                (cache_key, captions_json)
-
-
-
-                VALUES (?, ?)
-
-
-
-                """,
-
-
-
-                (key, json.dumps(result)),
-
-
-
-            )
-
-
-
-
-
-
-
-            for caption in result["captions"]:
-
-
-
-                db.execute(
-
-
-
-                    """
-
-
-
-                    INSERT OR IGNORE INTO caption_history
-
-
-
-                    (
-
-
-
-                        cache_key,
-
-
-
-                        caption_normalized,
-
-
-
-                        caption_text
-
-
-
-                    )
-
-
-
-                    VALUES (?, ?, ?)
-
-
-
-                    """,
-
-
-
-                    (
-
-
-
-                        key,
-
-
-
-                        normalize_caption(caption),
-
-
-
-                        caption,
-
-
-
-                    ),
-
-
-
-                )
-
-
-
-
-
-
-
-
-
+def parse_previous_captions(raw):
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid previous captions.")
+    if not isinstance(data, list):
+        raise HTTPException(status_code=400, detail="Invalid previous captions.")
+    captions = [
+        item.strip()[:120]
+        for item in data
+        if isinstance(item, str) and item.strip()
+    ]
+    return captions[-MAX_PREVIOUS_CAPTIONS:]
 
 
 # ============================================================
@@ -1250,95 +422,6 @@ def prepare_ai_image(image):
 
 
     return output.getvalue()
-
-
-
-
-
-
-
-
-
-
-
-def create_cache_key(
-
-
-
-    image_bytes,
-
-
-
-    theme,
-
-
-
-    custom_theme,
-
-
-
-):
-
-
-
-    digest = hashlib.sha256()
-
-
-
-
-
-
-
-    for part in (
-
-
-
-        PROMPT_VERSION.encode(),
-
-
-
-        image_bytes,
-
-
-
-        APIYI_MODEL.encode(),
-
-
-
-        theme.encode(),
-
-
-
-        custom_theme.encode(),
-
-
-
-    ):
-
-
-
-        digest.update(part)
-
-
-
-        digest.update(b"\x00")
-
-
-
-
-
-
-
-    return digest.hexdigest()
-
-
-
-
-
-
-
-
-
 
 
 # ============================================================
@@ -3357,1477 +2440,179 @@ def validate_ai_result(parsed):
 # BASIC ENDPOINTS
 # ============================================================
 @app.get("/")
-
-
-
 def home():
-
-
-
-    return {
-
-
-
-        "message": "Meme-it backend is running!"
-
-
-
-    }
-
-
-
-
-
-
-
-
-
+    return {"message": "Meme-it backend is running!"}
 
 
 @app.get("/health")
-
-
-
 def health():
-
-
-
     return {
-
-
-
         "status": "ok",
-
-
-
         "model": APIYI_MODEL,
-
-
-
         "api_key_configured": bool(APIYI_API_KEY),
-
-
-
-        "prompt_version": PROMPT_VERSION,
-
-
-
     }
-
-
-
-
-
-
-
-
-
 
 
 # ============================================================
 # IMAGE PREPARATION
 # ============================================================
 @app.post("/api/prepare-image")
-
-
-
-async def prepare_image(
-
-
-
-    file: UploadFile = File(...)
-
-
-
-):
-
-
-
-    return png_response(
-
-
-
-        await load_image(file)
-
-
-
-    )
-
-
-
-
-
-
-
-
-
-
-
-# ============================================================
-# BACKGROUND REMOVAL
-# ============================================================
-
-
-
-
-
-
-
-
-
-
+async def prepare_image(file: UploadFile = File(...)):
+    return png_response(await load_image(file))
 
 
 # ============================================================
 # APIYI REQUEST
 # ============================================================
-def request_apiyi(
-
-
-
-    image_bytes,
-
-
-
-    theme,
-
-
-
-    custom_theme,
-
-
-
-    previous_captions,
-
-
-
-    fresh,
-
-
-
-):
-
-
-
+def request_apiyi(image_bytes, theme, custom_theme, previous_captions, fresh):
     image_url = (
-
-
-
         "data:image/jpeg;base64,"
-
-
-
-        + base64.b64encode(
-
-
-
-            image_bytes
-
-
-
-        ).decode("utf-8")
-
-
-
+        + base64.b64encode(image_bytes).decode("utf-8")
     )
-
-
-
-
-
-
-
-    prompt = build_prompt(
-
-
-
-        theme,
-
-
-
-        custom_theme,
-
-
-
-        previous_captions,
-
-
-
-        fresh,
-
-
-
-    )
-
-
-
-
-
-
-
+    prompt = build_prompt(theme, custom_theme, previous_captions, fresh)
     payload = {
-
-
-
         "model": APIYI_MODEL,
-
-
-
         "messages": [
-
-
-
             {
-
-
-
                 "role": "user",
-
-
-
                 "content": [
-
-
-
-                    {
-
-
-
-                        "type": "text",
-
-
-
-                        "text": prompt,
-
-
-
-                    },
-
-
-
-                    {
-
-
-
-                        "type": "image_url",
-
-
-
-                        "image_url": {
-
-
-
-                            "url": image_url,
-
-
-
-                        },
-
-
-
-                    },
-
-
-
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
                 ],
-
-
-
             }
-
-
-
         ],
-
-
-
         "temperature": 1.0,
-
-
-
         "max_tokens": 2500,
-
-
-
     }
 
-
-
-
-
-
-
     try:
-
-
-
         response = requests.post(
-
-
-
             APIYI_URL,
-
-
-
             headers={
-
-
-
-                "Authorization": (
-
-
-
-                    f"Bearer {APIYI_API_KEY}"
-
-
-
-                ),
-
-
-
+                "Authorization": f"Bearer {APIYI_API_KEY}",
                 "Content-Type": "application/json",
-
-
-
             },
-
-
-
             json=payload,
-
-
-
             timeout=(10, 60),
-
-
-
         )
-
-
-
-
-
-
 
         if not response.ok:
-
-
-
-            error_message = (
-
-
-
-                f"APIYI returned HTTP "
-
-
-
-                f"{response.status_code}."
-
-
-
-            )
-
-
-
-
-
-
-
+            error_message = f"APIYI returned HTTP {response.status_code}."
             try:
-
-
-
                 provider_message = (
-
-
-
-                    response.json()
-
-
-
-                    .get("error", {})
-
-
-
-                    .get("message", "")
-
-
-
+                    response.json().get("error", {}).get("message", "")
                 )
-
-
-
-
-
-
-
                 if "无权使用模型" in provider_message:
-
-
-
                     error_message = (
-
-
-
                         "Your APIYI token cannot use model "
-
-
-
-                        f"'{APIYI_MODEL}'. "
-
-
-
-                        "Check model permissions."
-
-
-
+                        f"'{APIYI_MODEL}'. Check model permissions."
                     )
-
-
-
-
-
-
-
                 elif response.status_code == 401:
-
-
-
                     error_message = (
-
-
-
-                        "APIYI authentication failed. "
-
-
-
-                        "Check your API key."
-
-
-
+                        "APIYI authentication failed. Check your API key."
                     )
-
-
-
-
-
-
-
                 elif response.status_code == 429:
-
-
-
-                    error_message = (
-
-
-
-                        "APIYI rate limit or quota reached."
-
-
-
-                    )
-
-
-
-
-
-
-
-            except (
-
-
-
-                ValueError,
-
-
-
-                AttributeError,
-
-
-
-                TypeError,
-
-
-
-            ):
-
-
-
+                    error_message = "APIYI rate limit or quota reached."
+            except (ValueError, AttributeError, TypeError):
                 pass
-
-
-
-
-
-
-
-            raise HTTPException(
-
-
-
-                status_code=502,
-
-
-
-                detail=error_message,
-
-
-
-            )
-
-
-
-
-
-
+            raise HTTPException(status_code=502, detail=error_message)
 
         result = response.json()
-
-
-
         choices = result.get("choices", [])
-
-
-
-
-
-
-
         if not choices:
-
-
-
-            raise ValueError(
-
-
-
-                "AI response did not contain any choices."
-
-
-
-            )
-
-
-
-
-
-
-
+            raise ValueError("AI response did not contain any choices.")
         content = choices[0]["message"]["content"]
-
-
-
         parsed = extract_json(content)
-
-
-
-
-
-
-
         return validate_ai_result(parsed)
 
-
-
-
-
-
-
     except requests.Timeout:
-
-
-
         raise HTTPException(
-
-
-
             status_code=504,
-
-
-
-            detail=(
-
-
-
-                "APIYI took too long to respond. "
-
-
-
-                "Please try again later."
-
-
-
-            ),
-
-
-
+            detail="APIYI took too long to respond. Please try again later.",
         )
-
-
-
-
-
-
-
     except requests.RequestException as error:
-
-
-
-        print(
-
-
-
-            "APIYI connection error:",
-
-
-
-            type(error).__name__,
-
-
-
-            flush=True,
-
-
-
-        )
-
-
-
-
-
-
-
+        print("APIYI connection error:", type(error).__name__, flush=True)
         raise HTTPException(
-
-
-
             status_code=502,
-
-
-
             detail="Could not connect to APIYI.",
-
-
-
         )
-
-
-
-
-
-
-
-
-
 
 
 # ============================================================
-def add_personalization(result, user_id, theme, custom_theme):
-
-    if not user_id:
-
-        return result
-
-    ids = personalization_db.save_generated(user_id, result, theme, custom_theme)
-
-    personalization_db.save_theme(user_id, theme, custom_theme, 'generated')
-
-    result['meme_ids'] = ids
-
-    return result
-
-
-
-class FeedbackRequest(BaseModel):
-
-    user_id: str
-
-    meme_id: str
-
-    action: str
-
-
-
-class ThemeEventRequest(BaseModel):
-
-    user_id: str
-
-    theme: str
-
-    custom_theme: str = ''
-
-    action: str = 'selected'
-
-
-
-class PreferencesRequest(BaseModel):
-
-    user_id: str
-
-    preferred_style: str = 'mixed'
-
-    preferred_humour: Optional[str] = None
-
-
-
-@app.post('/api/users/{user_id}')
-
-def register_user(user_id: str):
-
-    return {'user_id': personalization_db.ensure_user(user_id)}
-
-
-
-@app.get('/api/users/{user_id}/suggested-themes')
-
-def suggested_themes(user_id: str):
-
-    return {'suggestions': personalization_db.suggest_themes(user_id)}
-
-
-
-@app.get("/api/ai-theme-recommendations/{user_id}")
-def ai_theme_recommendations(user_id: str, refresh: bool = False):
-    # Import here so backend/.env has already been loaded.
-    from theme_recommender import get_recommendations
-
-    try:
-        return get_recommendations(user_id, refresh=refresh)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error))
-    except requests.RequestException:
-        raise HTTPException(status_code=502, detail="AI recommendation service unavailable.")
-
-
-@app.get('/api/users/{user_id}/preferences')
-
-def get_user_preferences(user_id: str):
-
-    return personalization_db.get_preferences(user_id)
-
-
-
-@app.post('/api/preferences')
-
-def update_user_preferences(request: PreferencesRequest):
-
-    return personalization_db.update_preferences(request.user_id, request.preferred_style, request.preferred_humour)
-
-
-
-@app.post('/api/meme-feedback')
-
-def meme_feedback(request: FeedbackRequest):
-
-    personalization_db.record_feedback(request.user_id, request.meme_id, request.action)
-
-    return {'ok': True}
-
-
-
-@app.post('/api/theme-event')
-
-def theme_event(request: ThemeEventRequest):
-
-    personalization_db.save_theme(request.user_id, request.theme, request.custom_theme, request.action)
-
-    return {'ok': True}
-
-
-
 # AI CAPTION GENERATION
 # ============================================================
 @app.post("/api/generate-captions")
-
-
-
 async def generate_captions(
-
-
-
     file: UploadFile = File(...),
-
-
-
     theme: str = Form(...),
-
-
-
     custom_theme: str = Form(""),
-
-
-
     fresh: bool = Form(False),
-
-    user_id: Optional[str] = Form(None),
-
-
-
+    # JSON array of captions already shown for this photo and theme.
+    previous_captions: str = Form(""),
 ):
-
-
-
     if theme not in THEMES:
-
-
-
-        raise HTTPException(
-
-
-
-            status_code=400,
-
-
-
-            detail="Invalid theme.",
-
-
-
-        )
-
-
-
-
-
-
+        raise HTTPException(status_code=400, detail="Invalid theme.")
 
     custom_theme = custom_theme.strip()
-
-
-
-
-
-
-
     if theme == "Custom Theme" and not custom_theme:
-
-
-
         raise HTTPException(
-
-
-
             status_code=400,
-
-
-
             detail="Please enter a custom theme.",
-
-
-
         )
-
-
-
-
-
-
-
     if len(custom_theme) > 100:
-
-
-
         raise HTTPException(
-
-
-
             status_code=400,
-
-
-
-            detail=(
-
-
-
-                "Custom theme must be "
-
-
-
-                "100 characters or fewer."
-
-
-
-            ),
-
-
-
+            detail="Custom theme must be 100 characters or fewer.",
         )
-
-
-
-
-
-
 
     if not APIYI_API_KEY:
-
-
-
         raise HTTPException(
-
-
-
             status_code=503,
-
-
-
-            detail=(
-
-
-
-                "APIYI API key is missing "
-
-
-
-                "from backend/.env."
-
-
-
-            ),
-
-
-
+            detail="APIYI API key is missing from backend/.env.",
         )
 
-
-
-
-
-
-
-    image_bytes = prepare_ai_image(
-
-
-
-        await load_image(file)
-
-
-
-    )
-
-
-
-
-
-
-
-    cache_key = create_cache_key(
-
-
-
-        image_bytes,
-
-
-
-        theme,
-
-
-
-        custom_theme,
-
-
-
-    )
-
-
-
-
-
-
-
-    try:
-
-
-
-        # Only use saved captions when fresh=False.
-        if not fresh:
-
-
-
-            cached = get_cached_result(cache_key)
-
-
-
-
-
-
-
-            if cached is not None:
-
-
-
-                return add_personalization({
-
-
-
-
-
-                    **cached,
-
-
-
-
-
-                    "cached": True,
-
-
-
-
-
-                    "model": APIYI_MODEL,
-
-
-
-
-
-                }, user_id, theme, custom_theme)
-
-
-
-
-
-
-
-        previous_captions = get_caption_history(
-
-
-
-            cache_key
-
-
-
-        )
-
-
-
-
-
-
-
-        previous_normalized = {
-
-
-
+    image_bytes = prepare_ai_image(await load_image(file))
+    previous = parse_previous_captions(previous_captions)
+    previous_normalized = {normalize_caption(caption) for caption in previous}
+
+    last_error = None
+    attempts = MAX_GENERATION_ATTEMPTS if fresh else 1
+
+    for attempt in range(attempts):
+        try:
+            result_data = await run_in_threadpool(
+                request_apiyi,
+                image_bytes,
+                theme,
+                custom_theme,
+                previous,
+                fresh,
+            )
+        except (ValueError, KeyError, TypeError) as error:
+            last_error = str(error)
+            print("AI response error:", last_error, flush=True)
+            continue
+
+        new_normalized = {
             normalize_caption(caption)
-
-
-
-            for caption in previous_captions
-
-
-
+            for caption in result_data["captions"]
         }
-
-
-
-
-
-
-
-        last_error = None
-
-
-
-
-
-
-
-        attempts = (
-
-
-
-            MAX_GENERATION_ATTEMPTS
-
-
-
-            if fresh
-
-
-
-            else 1
-
-
-
-        )
-
-
-
-
-
-
-
-        for attempt in range(attempts):
-
-
-
-            # Each provider call consumes development budget.
-            reserve_budget()
-
-
-
-
-
-
-
-            try:
-
-
-
-                result_data = request_apiyi(
-
-
-
-                    image_bytes,
-
-
-
-                    theme,
-
-
-
-                    custom_theme,
-
-
-
-                    previous_captions,
-
-
-
-                    fresh,
-
-
-
-                )
-
-
-
-
-
-
-
-                new_normalized = {
-
-
-
-                    normalize_caption(caption)
-
-
-
-                    for caption in result_data["captions"]
-
-
-
-                }
-
-
-
-
-
-
-
-                repeated = (
-
-
-
-                    new_normalized
-
-
-
-                    & previous_normalized
-
-
-
-                )
-
-
-
-
-
-
-
-                if fresh and repeated:
-
-
-
-                    last_error = (
-
-
-
-                        "APIYI repeated previously "
-
-
-
-                        "generated captions."
-
-
-
-                    )
-
-
-
-
-
-
-
-                    print(
-
-
-
-                        f"Fresh attempt {attempt + 1}: "
-
-
-
-                        f"{len(repeated)} repeated captions.",
-
-
-
-                        flush=True,
-
-
-
-                    )
-
-
-
-
-
-
-
-                    continue
-
-
-
-
-
-
-
-                # Save latest captions and add to history.
-                save_cached_result(
-
-
-
-                    cache_key,
-
-
-
-                    result_data,
-
-
-
-                )
-
-
-
-
-
-
-
-                return add_personalization({
-
-
-
-
-
-
-
-
-
-                    **result_data,
-
-
-
-
-
-
-
-
-
-                    "cached": False,
-
-
-
-
-
-
-
-
-
-                    "model": APIYI_MODEL,
-
-
-
-
-
-
-
-
-
-                }, user_id, theme, custom_theme)
-
-
-
-
-
-
-
-            except (
-
-
-
-                ValueError,
-
-
-
-                KeyError,
-
-
-
-                TypeError,
-
-
-
-            ) as error:
-
-
-
-                last_error = str(error)
-
-
-
-
-
-
-
-                print(
-
-
-
-                    "AI response error:",
-
-
-
-                    last_error,
-
-
-
-                    flush=True,
-
-
-
-                )
-
-
-
-
-
-
-
-                continue
-
-
-
-
-
-
-
-        raise HTTPException(
-
-
-
-            status_code=502,
-
-
-
-            detail=(
-
-
-
-                "Could not generate five completely new "
-
-
-
-                "memes this time. Please try again. "
-
-
-
-                f"{last_error or ''}"
-
-
-
-            ).strip(),
-
-
-
-        )
-
-
-
-
-
-
-
-    except HTTPException:
-
-
-
-        raise
-
-
-
-
-
-
-
-    except sqlite3.Error as error:
-
-
-
-        print(
-
-
-
-            "Database error:",
-
-
-
-            str(error),
-
-
-
-            flush=True,
-
-
-
-        )
-
-
-
-
-
-
-
-        raise HTTPException(
-
-
-
-            status_code=500,
-
-
-
-            detail=(
-
-
-
-                "Caption database error. "
-
-
-
-                "Check the backend terminal."
-
-
-
-            ),
-
-
-
-        )
+        repeated = new_normalized & previous_normalized
+        if fresh and repeated:
+            last_error = "APIYI repeated previously generated captions."
+            print(
+                f"Fresh attempt {attempt + 1}: "
+                f"{len(repeated)} repeated captions.",
+                flush=True,
+            )
+            continue
+
+        return {**result_data, "model": APIYI_MODEL}
+
+    raise HTTPException(
+        status_code=502,
+        detail=(
+            "Could not generate five completely new memes this time. "
+            f"Please try again. {last_error or ''}"
+        ).strip(),
+    )

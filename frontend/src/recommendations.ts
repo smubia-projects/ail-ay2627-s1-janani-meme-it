@@ -1,144 +1,64 @@
-const API_URL =
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+// Theme suggestions kept entirely in this browser (localStorage).
+// The public demo has no accounts or database, so "recent themes" are the
+// themes this visitor generated memes for, most recent first.
 
-const USER_ID_KEY = "memeit_user_id";
+const HISTORY_KEY = "ail-ay2627-s1-janani-meme-it:theme-history";
+const MAX_HISTORY = 12;
 
-export type RecommendationResponse = {
-  type: "trending" | "personalized";
-  generation_count: number;
-  next_unlock?: number;
-  cached?: boolean;
-  themes: string[];
-  trending_themes: string[];
-  personalized_themes: string[];
-};
+// Starter ideas shown before the visitor has any history.
+export const THEME_IDEAS = [
+  "Office Lunches",
+  "Exam Stress",
+  "Group Projects",
+  "Dating Apps",
+  "Debugging",
+  "Family Gatherings",
+  "Monday Mornings",
+  "Gym Motivation",
+  "Online Shopping",
+  "Group Chats",
+  "Deadlines",
+  "Weekend Plans",
+];
 
-export type ThemeEvent = {
-  user_id: string;
-  theme: string;
-  custom_theme: string;
-  action: "generated" | "selected" | "sticker_created" | "downloaded";
-};
+export function themeLabel(theme: string, customTheme: string): string {
+  return (theme === "Custom Theme" ? customTheme : theme).trim().slice(0, 100);
+}
 
-export function getUserId(): string {
-  let userId = localStorage.getItem(USER_ID_KEY);
-
-  if (!userId) {
-    userId = crypto.randomUUID();
-    localStorage.setItem(USER_ID_KEY, userId);
+export function getThemeHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY);
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed)
+      ? parsed.filter((item): item is string => typeof item === "string")
+      : [];
+  } catch {
+    return [];
   }
-
-  return userId;
 }
 
-async function readResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let message = `Request failed (${response.status})`;
-
-    try {
-      const data: unknown = await response.json();
-      if (
-        typeof data === "object" &&
-        data !== null &&
-        "detail" in data &&
-        typeof data.detail === "string"
-      ) {
-        message = data.detail;
-      }
-    } catch {
-      // Keep the default message.
-    }
-
-    throw new Error(message);
+// Only custom themes are remembered; the built-in ones always have a button.
+export function recordThemeGeneration(theme: string, customTheme: string): void {
+  if (theme !== "Custom Theme") return;
+  const label = themeLabel(theme, customTheme);
+  if (!label) return;
+  const history = getThemeHistory().filter(
+    item => item.toLowerCase() !== label.toLowerCase()
+  );
+  history.unshift(label);
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, MAX_HISTORY)));
+  } catch {
+    // Storage full or blocked: suggestions just won't remember this theme.
   }
-
-  return (await response.json()) as T;
 }
 
-export async function registerAnonymousUser(userId: string): Promise<void> {
-  const response = await fetch(
-    `${API_URL}/api/users/${encodeURIComponent(userId)}`,
-    { method: "POST" }
-  );
-  await readResponse<unknown>(response);
-}
-
-export async function fetchRecommendations(
-  userId: string,
-  refresh = false
-): Promise<RecommendationResponse> {
-  const params = new URLSearchParams();
-  if (refresh) params.set("refresh", "true");
-  const query = params.toString();
-
-  const response = await fetch(
-    `${API_URL}/api/ai-theme-recommendations/${encodeURIComponent(userId)}${query ? `?${query}` : ""}`,
-    { method: "GET", cache: "no-store" }
-  );
-
-  return readResponse<RecommendationResponse>(response);
-}
-
-export async function recordThemeGeneration(
-  userId: string,
-  theme: string,
-  customTheme: string
-): Promise<void> {
-  const event: ThemeEvent = {
-    user_id: userId,
-    theme,
-    custom_theme: theme === "Custom Theme" ? customTheme.trim() : "",
-    action: "generated",
-  };
-
-  const response = await fetch(`${API_URL}/api/theme-event`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(event),
-  });
-
-  await readResponse<unknown>(response);
-}
-
-export async function saveGeneratedMemes(
-  userId: string,
-  theme: string,
-  customTheme: string,
-  memes: {
-    caption: string;
-    characters: { person_index: number; label: string }[];
-  }[]
-): Promise<string[]> {
-  const response = await fetch(`${API_URL}/api/generated-memes`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: userId,
-      theme,
-      custom_theme: theme === "Custom Theme" ? customTheme.trim() : "",
-      caption_style: "mixed",
-      memes,
-    }),
-  });
-
-  const data = await readResponse<{
-    saved: boolean;
-    memes: { id: string }[];
-  }>(response);
-
-  return data.memes.map((meme) => meme.id);
-}
-
-export async function recordMemeFeedback(
-  userId: string,
-  memeId: string,
-  action: "selected" | "liked" | "disliked" | "sticker_created"
-): Promise<void> {
-  const response = await fetch(`${API_URL}/api/meme-feedback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId, meme_id: memeId, action }),
-  });
-
-  await readResponse<unknown>(response);
+export function pickThemeIdeas(exclude: string[], count = 6): string[] {
+  const skip = new Set(exclude.map(item => item.toLowerCase()));
+  const pool = THEME_IDEAS.filter(item => !skip.has(item.toLowerCase()));
+  for (let i = pool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, count);
 }

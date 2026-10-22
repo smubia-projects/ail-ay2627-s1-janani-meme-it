@@ -7,11 +7,7 @@ import {
 } from "react";
 import JSZip from "jszip";
 import ThemeRecommendations from "./ThemeRecommendations";
-import {
-  getUserId,
-
-  recordMemeFeedback,
-} from "./recommendations";
+import { recordThemeGeneration, themeLabel } from "./recommendations";
 import { createSticker } from "./sticker";
 import {
   createMultiPersonSticker,
@@ -45,8 +41,6 @@ type APIResponse = {
   people: Person[];
   memes: Meme[];
   captions: string[];
-  cached?: boolean;
-  meme_ids?: string[];
   detail?: string;
 };
 type PackSticker = {
@@ -77,8 +71,9 @@ function App() {
   const [customTheme, setCustomTheme] = useState("");
   const [suggestedTheme, setSuggestedTheme] = useState<string | null>(null);
   const [memes, setMemes] = useState<Meme[]>([]);
-  const [generationVersion, setGenerationVersion] = useState(0);
-  const savedMemeIdsRef = useRef<string[]>([]);
+  // Captions already shown for the current photo, per theme. Sent back so a
+  // fresh generation avoids repeats (the API itself stores nothing).
+  const seenCaptionsRef = useRef<Record<string, string[]>>({});
   const [selectedMeme, setSelectedMeme] = useState<number | null>(null);
   const [caption, setCaption] = useState("");
   const [characters, setCharacters] = useState<StickerCharacter[]>([]);
@@ -112,7 +107,6 @@ function App() {
   }
   function clearMemeResults() {
     setMemes([]);
-    savedMemeIdsRef.current = [];
     setSelectedMeme(null);
     setCaption("");
     setCharacters([]);
@@ -156,14 +150,18 @@ async function requestMemes(
   const formData = new FormData();
   formData.append("file", file);
   formData.append("theme", selectedTheme);
-  // Photo detection must not count as a meme generation.
-  if (fresh) formData.append("user_id", getUserId());
   formData.append(
     "custom_theme",
     selectedTheme === "Custom Theme" ? custom.trim() : ""
   );
   // Tell the backend whether to generate new captions.
   formData.append("fresh", String(fresh));
+  if (fresh) {
+    formData.append(
+      "previous_captions",
+      JSON.stringify(seenCaptionsRef.current[captionKey(selectedTheme, custom)] ?? [])
+    );
+  }
   const response = await fetch(
     `${API_URL}/api/generate-captions`,
     {
@@ -206,6 +204,7 @@ async function detectPeople(file: File) {
       false
     );
     if (controller.signal.aborted) return;
+    rememberCaptions("Life", "", data.captions);
     setPeople(data.people);
     setPeopleCount(data.people_count);
     if (data.people_count <= 1) {
@@ -248,6 +247,7 @@ async function detectPeople(file: File) {
     if (cutoutCache.current) URL.revokeObjectURL(cutoutCache.current);
     cutoutCache.current = null;
     cutoutPromise.current = null;
+    seenCaptionsRef.current = {};
     const url = URL.createObjectURL(file);
     photoRef.current = url;
     setPhoto(url);
@@ -309,27 +309,23 @@ async function detectPeople(file: File) {
     );
     setSticker(null);
   }
-  function trackSuccessfulGeneration(data: APIResponse) {
-    // main.py already saves generated memes and the theme history
-    // when user_id is sent with the caption request.
-    savedMemeIdsRef.current = data.meme_ids ?? [];
-    setGenerationVersion(version => version + 1);
+  function captionKey(selectedTheme: Theme, custom: string) {
+    return themeLabel(selectedTheme, custom).toLowerCase();
   }
-  async function trackFeedback(index: number | null, action: "selected" | "sticker_created") {
-    if (index === null) return;
-    const id = savedMemeIdsRef.current[index];
-    if (!id) return;
-    try {
-      await recordMemeFeedback(getUserId(), id, action);
-    } catch (trackingError) {
-      console.warn("Could not save meme feedback:", trackingError);
-    }
+  function rememberCaptions(selectedTheme: Theme, custom: string, captions: string[]) {
+    const key = captionKey(selectedTheme, custom);
+    const seen = seenCaptionsRef.current[key] ?? [];
+    seenCaptionsRef.current[key] = [...seen, ...captions].slice(-60);
+  }
+  function trackSuccessfulGeneration(data: APIResponse) {
+    // Remember captions and the theme in this browser only.
+    rememberCaptions(theme, customTheme, data.captions);
+    recordThemeGeneration(theme, customTheme);
   }
   function chooseMeme(index: number) {
     const meme = memes[index];
     if (!meme) return;
     setSelectedMeme(index);
-    void trackFeedback(index, "selected");
     setCaption(meme.caption);
     setCharacters(buildCharacters(meme));
     setSticker(null);
@@ -453,7 +449,6 @@ async function getCutout(file: File): Promise<string> {
       }
       setSticker(result);
       setStatus("Your sticker is ready!");
-      void trackFeedback(selectedMeme, "sticker_created");
     } catch (err) {
       setError(
         err instanceof Error
@@ -752,7 +747,6 @@ async function getCutout(file: File): Promise<string> {
               </div>
               <ThemeRecommendations
                 onSelectTheme={chooseSuggestedTheme}
-                generationVersion={generationVersion}
                 disabled={busy}
               />
               {suggestedTheme && (
