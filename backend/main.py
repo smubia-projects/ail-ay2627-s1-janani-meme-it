@@ -24,13 +24,13 @@ load_dotenv(BASE_DIR / ".env")
 # Imported after load_dotenv: the adapter reads its limits from the env.
 from rate_limit import check_rate_limit  # noqa: E402
 
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+OPENROUTER_API_KEY = (os.getenv("API_KEY", "").strip() or os.getenv("OPENROUTER_API_KEY", "")).strip()
 # Any OpenRouter vision model that can return JSON. The prompt and
 # validate_ai_result were tuned on Gemini 3.1 Flash Lite.
-OPENROUTER_MODEL = os.getenv(
+OPENROUTER_MODEL = (os.getenv("MODEL_NAME", "").strip() or os.getenv(
     "OPENROUTER_MODEL", "google/gemini-3.1-flash-lite"
-).strip()
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+)).strip()
+OPENROUTER_URL = (os.getenv("API_BASE_URL", "").strip() or os.getenv("OPENROUTER_BASE_URL", "").strip() or "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions"
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 MAX_PIXELS = 20_000_000
