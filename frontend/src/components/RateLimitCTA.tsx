@@ -13,9 +13,9 @@ const PROJECT_CTA = {
   description:
     'This demo ran {count} AI meme requests for you, its limit for now. Want to build AI apps like this one? Join us, or run your own copy from GitHub.',
   programme: 'AI Lodge',
-  programmeLink: 'https://www.smubia.com/ai-lodge',
+  programmeLink: 'https://www.smubia.com/ailodge',
   githubLink: 'https://github.com/smubia-projects/ail-ay2627-s1-janani-meme-it',
-  showcaseLink: 'https://www.smubia.com/showcase',
+  showcaseLink: 'https://www.smubia.com/Projects',
 };
 
 interface RateLimitCTAProps {
@@ -158,20 +158,6 @@ export function RateLimitCTA({ queriesMade, onDismiss }: RateLimitCTAProps) {
             <span style={arrowStyle}>→</span>
           </a>
           <a
-            href={project.githubLink}
-            target="_blank"
-            rel="noopener noreferrer"
-            style={{
-              ...ctaButtonStyle,
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: '#e5e5e5',
-            }}
-          >
-            Self-host from GitHub
-            <span style={arrowStyle}>→</span>
-          </a>
-          <a
             href={project.showcaseLink}
             target="_blank"
             rel="noopener noreferrer"
@@ -183,6 +169,20 @@ export function RateLimitCTA({ queriesMade, onDismiss }: RateLimitCTAProps) {
             }}
           >
             Explore other projects
+            <span style={arrowStyle}>→</span>
+          </a>
+          <a
+            href={project.githubLink}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{
+              ...ctaButtonStyle,
+              background: 'rgba(255,255,255,0.06)',
+              border: '1px solid rgba(255,255,255,0.1)',
+              color: '#e5e5e5',
+            }}
+          >
+            View on GitHub
             <span style={arrowStyle}>→</span>
           </a>
         </div>
