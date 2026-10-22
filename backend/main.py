@@ -7,7 +7,7 @@ from pathlib import Path
 
 import requests
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
@@ -20,6 +20,9 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 # ============================================================
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
+
+# Imported after load_dotenv: the adapter reads its limits from the env.
+from rate_limit import check_rate_limit  # noqa: E402
 
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
 # Any OpenRouter vision model that can return JSON. The prompt and
@@ -2512,6 +2515,7 @@ def request_openrouter(image_bytes, theme, custom_theme, previous_captions, fres
 # ============================================================
 @app.post("/api/generate-captions")
 async def generate_captions(
+    request: Request,
     file: UploadFile = File(...),
     theme: str = Form(...),
     custom_theme: str = Form(""),
@@ -2543,6 +2547,10 @@ async def generate_captions(
 
     image_bytes = prepare_ai_image(await load_image(file))
     previous = parse_previous_captions(previous_captions)
+
+    # Shared AI Lodge limiter: 429 over quota, 503 when the demo is paused.
+    # Checked after input validation so bad uploads don't use up quota.
+    await run_in_threadpool(check_rate_limit, request, "captions")
     previous_normalized = {normalize_caption(caption) for caption in previous}
 
     last_error = None
