@@ -8,9 +8,9 @@ Meme-it is an AI-powered web application that transforms personal photos into fu
 **Hackathon:** AI Lodge Hackathon 2026  
 **Track:** Projects for Daily Life
 
-**Live Demo:** https://meme-it-beta.vercel.app
+**Live Demo (AI Lodge):** https://ail-ay2627-s1-janani-meme-it.vercel.app
 
-**GitHub Repository:** https://github.com/jananij2025-blip/Meme-it
+**GitHub Repository:** https://github.com/smubia-projects/ail-ay2627-s1-janani-meme-it (original: https://github.com/jananij2025-blip/Meme-it)
 
 ---
 
@@ -43,7 +43,7 @@ The application aims to make personalized meme creation accessible, quick, and e
 - Generate five meme caption suggestions.
 - Choose from Work, Relationships, Life, Tech, and other themes.
 - Enter custom themes.
-- Receive personalized theme recommendations.
+- Pick from theme ideas or your recent custom themes (remembered in your browser).
 
 ### Meme Customization
 - Select a favourite AI-generated caption.
@@ -61,8 +61,8 @@ The application aims to make personalized meme creation accessible, quick, and e
 - Download packs containing 6–12 stickers as ZIP files.
 
 ### Personalized Experience
-- Track meme selections and sticker creation feedback.
-- Use previous interactions to support theme recommendations.
+- Recent custom themes are saved in your browser (localStorage) and offered again.
+- "Find my memes" avoids repeating captions you have already seen for the same photo.
 
 ## 4. AI Integration
 
@@ -70,7 +70,7 @@ Meme-it integrates AI into two main parts of its workflow.
 
 **Multimodal Meme Caption Generation**
 
-Gemini, accessed through APIYI, processes the uploaded image together with the selected theme to generate contextually relevant meme captions.
+Gemini (`google/gemini-3.1-flash-lite` by default), accessed through OpenRouter, processes the uploaded image together with the selected theme to generate contextually relevant meme captions.
 
 The model can interpret visual context, including expressions, poses, and situations, although it is not a dedicated facial-expression classifier.
 
@@ -82,7 +82,7 @@ This enables the creation of transparent stickers while reducing server-side pro
 
 **Personalization**
 
-User interaction history and feedback are used to support personalized theme recommendations.
+Theme history stays in the user's browser. The public demo has no accounts or database.
 
 ## 5. External Tools, Technologies and Datasets
 
@@ -93,12 +93,12 @@ User interaction history and feedback are used to support personalized theme rec
 | Vite | Frontend build tool |
 | Python | Backend programming |
 | FastAPI | Backend API |
-| Gemini via APIYI | AI-powered caption generation |
-| @imgly/background-removal | Browser-based AI background removal |
-| Supabase | Personalization and feedback data |
+| Gemini via OpenRouter | AI-powered caption generation |
+| @imgly/background-removal | Browser-based AI background removal (AGPL-3.0) |
 | JSZip | Sticker pack ZIP downloads |
 | Vercel | Frontend hosting |
-| Render | Backend hosting |
+| Google Cloud Run | Backend hosting |
+| Upstash Redis | Shared AI Lodge rate limiting |
 | GitHub | Source code management |
 
 **Datasets:** No custom training dataset is required for the core caption-generation and background-removal workflow. The application uses pretrained AI models.
@@ -108,83 +108,43 @@ User interaction history and feedback are used to support personalized theme rec
 ### Prerequisites
 
 - Node.js and npm
-- Python 3
-- Git
-- APIYI API key
-- Supabase project credentials
+- Python 3.11+
+- An OpenRouter API key
 
-### Clone the Repository
-
-```bash
-git clone https://github.com/jananij2025-blip/Meme-it.git
-cd Meme-it
-```
-
-### Frontend Setup
-
-```bash
-cd frontend
-npm install
-```
-
-Create a `.env` file inside `frontend`:
-
-```env
-VITE_API_URL=http://127.0.0.1:8000
-```
-
-Start the frontend:
-
-```bash
-npm run dev
-```
-
-Open the local URL displayed by Vite, typically `http://localhost:5173`.
-
-### Backend Setup
-
-Open another terminal in the project root:
+### Backend
 
 ```bash
 cd backend
 python -m venv .venv
-```
-
-Activate the virtual environment.
-
-Windows:
-
-```powershell
-.venv\Scripts\activate
-```
-
-macOS/Linux:
-
-```bash
-source .venv/bin/activate
-```
-
-Install dependencies:
-
-```bash
+.venv\Scripts\activate          # macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
+cp .env.example .env             # then set OPENROUTER_API_KEY
+uvicorn main:app --reload --port 8000
 ```
 
-Configure the required backend environment variables:
+The API runs at `http://localhost:8000` (`GET /api/health` returns `{"status": "ok", ...}`).
+Rate limiting is disabled locally when the Upstash variables are empty.
 
-```env
-APIYI_API_KEY=your_api_key
-SUPABASE_URL=your_supabase_url
-SUPABASE_KEY=your_supabase_key
-```
-
-Start the API:
+### Frontend
 
 ```bash
-uvicorn main:app --reload
+cd frontend
+npm install
+npm run dev
 ```
 
-The backend will run at `http://127.0.0.1:8000`.
+Open `http://localhost:5173`. The frontend calls `VITE_API_BASE` (default `http://localhost:8000`);
+see `frontend/.env.example`.
+
+### API
+
+| Route | Purpose |
+|---|---|
+| `GET /api/health` | Health check |
+| `POST /api/generate-captions` | One vision LLM call: people count + five captions (rate-limited, bucket `captions`) |
+| `POST /api/prepare-image` | Validates and resizes an image (no LLM; not used by the current UI) |
+
+The API is stateless: it stores no photos, captions or user data.
 
 **Security:** Never commit actual API keys, service-role credentials, or `.env` files to GitHub.
 
@@ -195,7 +155,7 @@ Meme-it has several important considerations for responsible AI use.
 ### Image Privacy
 Users upload personal photos, which may contain identifiable people. Images should only be uploaded with appropriate permission.
 
-The caption-generation workflow sends uploaded image data to the backend and an external AI provider. Background removal runs locally in the browser.
+The caption-generation workflow sends a downscaled copy of the uploaded image to the backend and on to an AI model provider through OpenRouter. The backend does not store images, and the app shows this notice next to the upload box. Background removal runs locally in the browser.
 
 ### AI-Generated Content
 AI-generated captions may occasionally be inaccurate, irrelevant, or inappropriate.
@@ -239,16 +199,16 @@ This experience highlighted the importance of designing AI applications around d
 - Persistent sticker-pack storage and sharing.
 - Better performance on mobile devices.
 
-## 10. Deployment
+## 10. Deployment (AI Lodge)
 
-**Frontend:** Vercel  
-https://meme-it-beta.vercel.app
+**Frontend:** Vercel, root directory `frontend/` (`vercel.json`: Vite, `npm run build`, output `dist`), env `VITE_API_BASE`.
+https://ail-ay2627-s1-janani-meme-it.vercel.app
 
-**Backend:** Render  
-https://meme-it-backend.onrender.com
+**Backend:** Google Cloud Run, built from `backend/Dockerfile` by `.github/workflows/deploy.yml` on every push to `main`.
+Env vars come from the repo's `DOTENV` secret (see `backend/.env.example`).
+https://ail-ay2627-s1-janani-meme-it-464725632804.asia-southeast3.run.app
 
-**Source Code:** GitHub  
-https://github.com/jananij2025-blip/Meme-it
+AI calls are limited per visitor by the shared AI Lodge rate limiter; when the limit is reached the app shows the AI Lodge call-to-action.
 
 ---
 
