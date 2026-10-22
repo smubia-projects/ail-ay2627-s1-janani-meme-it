@@ -21,9 +21,13 @@ from PIL import Image, ImageOps, UnidentifiedImageError
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
-APIYI_API_KEY = os.getenv("APIYI_API_KEY", "").strip()
-APIYI_MODEL = os.getenv("APIYI_MODEL", "gemini-3.1-flash-lite").strip()
-APIYI_URL = "https://api.apiyi.com/v1/chat/completions"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "").strip()
+# Any OpenRouter vision model that can return JSON. The prompt and
+# validate_ai_result were tuned on Gemini 3.1 Flash Lite.
+OPENROUTER_MODEL = os.getenv(
+    "OPENROUTER_MODEL", "google/gemini-3.1-flash-lite"
+).strip()
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 MAX_PIXELS = 20_000_000
@@ -2448,8 +2452,8 @@ def home():
 def health():
     return {
         "status": "ok",
-        "model": APIYI_MODEL,
-        "api_key_configured": bool(APIYI_API_KEY),
+        "model": OPENROUTER_MODEL,
+        "api_key_configured": bool(OPENROUTER_API_KEY),
     }
 
 
@@ -2462,16 +2466,16 @@ async def prepare_image(file: UploadFile = File(...)):
 
 
 # ============================================================
-# APIYI REQUEST
+# OPENROUTER REQUEST
 # ============================================================
-def request_apiyi(image_bytes, theme, custom_theme, previous_captions, fresh):
+def request_openrouter(image_bytes, theme, custom_theme, previous_captions, fresh):
     image_url = (
         "data:image/jpeg;base64,"
         + base64.b64encode(image_bytes).decode("utf-8")
     )
     prompt = build_prompt(theme, custom_theme, previous_captions, fresh)
     payload = {
-        "model": APIYI_MODEL,
+        "model": OPENROUTER_MODEL,
         "messages": [
             {
                 "role": "user",
@@ -2482,39 +2486,45 @@ def request_apiyi(image_bytes, theme, custom_theme, previous_captions, fresh):
             }
         ],
         "temperature": 1.0,
-        "max_tokens": 2500,
+        "max_tokens": 4000,
+        "response_format": {"type": "json_object"},
     }
 
     try:
         response = requests.post(
-            APIYI_URL,
+            OPENROUTER_URL,
             headers={
-                "Authorization": f"Bearer {APIYI_API_KEY}",
+                "Authorization": f"Bearer {OPENROUTER_API_KEY}",
                 "Content-Type": "application/json",
+                "X-Title": "Meme-it",
             },
             json=payload,
             timeout=(10, 60),
         )
 
         if not response.ok:
-            error_message = f"APIYI returned HTTP {response.status_code}."
             try:
                 provider_message = (
                     response.json().get("error", {}).get("message", "")
                 )
-                if "无权使用模型" in provider_message:
-                    error_message = (
-                        "Your APIYI token cannot use model "
-                        f"'{APIYI_MODEL}'. Check model permissions."
-                    )
-                elif response.status_code == 401:
-                    error_message = (
-                        "APIYI authentication failed. Check your API key."
-                    )
-                elif response.status_code == 429:
-                    error_message = "APIYI rate limit or quota reached."
             except (ValueError, AttributeError, TypeError):
-                pass
+                provider_message = ""
+            print(
+                "OpenRouter error:",
+                response.status_code,
+                provider_message,
+                flush=True,
+            )
+            if response.status_code == 401:
+                error_message = "The AI service rejected the server's API key."
+            elif response.status_code == 402:
+                error_message = "The AI service is out of credits."
+            elif response.status_code == 429:
+                error_message = "The AI service is busy. Please try again shortly."
+            else:
+                error_message = (
+                    f"The AI service returned HTTP {response.status_code}."
+                )
             raise HTTPException(status_code=502, detail=error_message)
 
         result = response.json()
@@ -2528,13 +2538,13 @@ def request_apiyi(image_bytes, theme, custom_theme, previous_captions, fresh):
     except requests.Timeout:
         raise HTTPException(
             status_code=504,
-            detail="APIYI took too long to respond. Please try again later.",
+            detail="The AI service took too long to respond. Please try again.",
         )
     except requests.RequestException as error:
-        print("APIYI connection error:", type(error).__name__, flush=True)
+        print("OpenRouter connection error:", type(error).__name__, flush=True)
         raise HTTPException(
             status_code=502,
-            detail="Could not connect to APIYI.",
+            detail="Could not connect to the AI service.",
         )
 
 
@@ -2565,10 +2575,11 @@ async def generate_captions(
             detail="Custom theme must be 100 characters or fewer.",
         )
 
-    if not APIYI_API_KEY:
+    # 500, not 503: 503 is reserved for the rate limiter's "demo paused".
+    if not OPENROUTER_API_KEY:
         raise HTTPException(
-            status_code=503,
-            detail="APIYI API key is missing from backend/.env.",
+            status_code=500,
+            detail="The AI service is not configured (OPENROUTER_API_KEY).",
         )
 
     image_bytes = prepare_ai_image(await load_image(file))
@@ -2581,7 +2592,7 @@ async def generate_captions(
     for attempt in range(attempts):
         try:
             result_data = await run_in_threadpool(
-                request_apiyi,
+                request_openrouter,
                 image_bytes,
                 theme,
                 custom_theme,
@@ -2599,7 +2610,7 @@ async def generate_captions(
         }
         repeated = new_normalized & previous_normalized
         if fresh and repeated:
-            last_error = "APIYI repeated previously generated captions."
+            last_error = "The AI repeated previously generated captions."
             print(
                 f"Fresh attempt {attempt + 1}: "
                 f"{len(repeated)} repeated captions.",
@@ -2607,7 +2618,7 @@ async def generate_captions(
             )
             continue
 
-        return {**result_data, "model": APIYI_MODEL}
+        return {**result_data, "model": OPENROUTER_MODEL}
 
     raise HTTPException(
         status_code=502,
