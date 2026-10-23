@@ -70,7 +70,7 @@ Meme-it integrates AI into two main parts of its workflow.
 
 **Multimodal Meme Caption Generation**
 
-Gemini (`google/gemini-3.1-flash-lite` by default), accessed through OpenRouter, processes the uploaded image together with the selected theme to generate contextually relevant meme captions.
+Gemini (`gemini-3.1-flash-lite` by default), accessed through apiyi, processes the uploaded image together with the selected theme to generate contextually relevant meme captions.
 
 The model can interpret visual context, including expressions, poses, and situations, although it is not a dedicated facial-expression classifier.
 

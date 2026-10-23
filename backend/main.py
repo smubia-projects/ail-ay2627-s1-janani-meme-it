@@ -28,9 +28,9 @@ OPENROUTER_API_KEY = (os.getenv("API_KEY", "").strip() or os.getenv("OPENROUTER_
 # Any OpenRouter vision model that can return JSON. The prompt and
 # validate_ai_result were tuned on Gemini 3.1 Flash Lite.
 OPENROUTER_MODEL = (os.getenv("MODEL_NAME", "").strip() or os.getenv(
-    "OPENROUTER_MODEL", "google/gemini-3.1-flash-lite"
+    "OPENROUTER_MODEL", "gemini-3.1-flash-lite"
 )).strip()
-OPENROUTER_URL = (os.getenv("API_BASE_URL", "").strip() or os.getenv("OPENROUTER_BASE_URL", "").strip() or "https://openrouter.ai/api/v1").rstrip("/") + "/chat/completions"
+OPENROUTER_URL = (os.getenv("API_BASE_URL", "").strip() or os.getenv("OPENROUTER_BASE_URL", "").strip() or "https://api.apiyi.com/v1").rstrip("/") + "/chat/completions"
 
 MAX_FILE_SIZE = 10 * 1024 * 1024
 MAX_PIXELS = 20_000_000
