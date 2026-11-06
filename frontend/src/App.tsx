@@ -7,7 +7,8 @@ import {
 } from "react";
 import JSZip from "jszip";
 import ThemeRecommendations from "./ThemeRecommendations";
-import { postForm } from "./api";
+import { isQuotaError, postForm } from "./api";
+import { QuotaModals } from "./components/QuotaModals";
 import { recordThemeGeneration, themeLabel } from "./recommendations";
 import { createSticker } from "./sticker";
 import {
@@ -206,6 +207,8 @@ async function detectPeople(file: File) {
     }
   } catch (err) {
     if (controller.signal.aborted) return;
+    // 429 / 503 are shown as modals by <QuotaModals />.
+    if (isQuotaError(err)) return;
     setError(
       err instanceof Error
         ? err.message
@@ -350,6 +353,7 @@ async function generateMemes() {
     trackSuccessfulGeneration(data);
   } catch (err) {
     if (controller.signal.aborted) return;
+    if (isQuotaError(err)) return;
     setError(
       err instanceof Error
         ? err.message
@@ -1123,6 +1127,7 @@ async function getCutout(file: File): Promise<string> {
       <footer>
         Made for the chronically online ✦ Meme-it
       </footer>
+      <QuotaModals />
     </div>
   );
 }
