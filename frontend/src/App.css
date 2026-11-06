@@ -378,6 +378,13 @@
   background: #d8ff98;
 }
 
+.privacy-note {
+  color: #858396;
+  font-size: 12px;
+  line-height: 1.6;
+  margin-top: 14px;
+}
+
 .result-note {
   color: #858396;
   font-size: 12px;

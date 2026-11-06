@@ -7,6 +7,7 @@ import {
 } from "react";
 import JSZip from "jszip";
 import ThemeRecommendations from "./ThemeRecommendations";
+import { postForm } from "./api";
 import { recordThemeGeneration, themeLabel } from "./recommendations";
 import { createSticker } from "./sticker";
 import {
@@ -41,7 +42,6 @@ type APIResponse = {
   people: Person[];
   memes: Meme[];
   captions: string[];
-  detail?: string;
 };
 type PackSticker = {
   id: string;
@@ -49,8 +49,6 @@ type PackSticker = {
   caption: string;
 };
 type PersonMode = "everyone" | "one" | null;
-const API_URL =
-  import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 const themes: Theme[] = [
   "Work",
   "Relationships",
@@ -162,21 +160,11 @@ async function requestMemes(
       JSON.stringify(seenCaptionsRef.current[captionKey(selectedTheme, custom)] ?? [])
     );
   }
-  const response = await fetch(
-    `${API_URL}/api/generate-captions`,
-    {
-      method: "POST",
-      body: formData,
-      signal,
-      cache: "no-store",
-    }
+  const data = await postForm<APIResponse>(
+    "/api/generate-captions",
+    formData,
+    signal
   );
-  const data: APIResponse = await response.json();
-  if (!response.ok) {
-    throw new Error(
-      data.detail || "Could not generate your memes."
-    );
-  }
   if (
     !Number.isInteger(data.people_count) ||
     !Array.isArray(data.people) ||
@@ -614,6 +602,11 @@ async function getCutout(file: File): Promise<string> {
                 Checking your photo...
               </p>
             )}
+            <p className="privacy-note">
+              🔒 To count people and write captions, your photo is sent to an
+              AI model provider (via OpenRouter). Meme-it does not store your
+              photos. Background removal and stickers are made in your browser.
+            </p>
           </section>
           {/* STEP 2 - PEOPLE */}
           {photo && peopleCount !== null && !peopleConfirmed && (
