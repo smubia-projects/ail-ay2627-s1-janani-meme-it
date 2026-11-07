@@ -11,7 +11,7 @@ const PROJECT_CTA = {
   accentColor: '#7C4DFF',
   headline: "You've been memed to the max!",
   description:
-    'This demo ran {count} AI meme requests for you, its limit for now. Want to build AI apps like this one? Join us, or run your own copy from GitHub.',
+    'Want to build AI that turns a selfie into the joke your friends will forward? Pitch your idea at AI Lodge, find your team and go from blank repo to live demo.',
   programme: 'AI Lodge',
   programmeLink: 'https://www.smubia.com/ailodge',
   githubLink: 'https://github.com/smubia-projects/ail-ay2627-s1-janani-meme-it',
