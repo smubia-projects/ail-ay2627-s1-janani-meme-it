@@ -25,10 +25,10 @@ load_dotenv(BASE_DIR / ".env")
 from rate_limit import check_rate_limit  # noqa: E402
 
 OPENROUTER_API_KEY = (os.getenv("API_KEY", "").strip() or os.getenv("OPENROUTER_API_KEY", "")).strip()
-# Any OpenRouter vision model that can return JSON. The prompt and
+# Any gateway vision model that can return JSON (AI Lodge default deepseek-v4-1-flash-260910). The prompt and
 # validate_ai_result were tuned on Gemini 3.1 Flash Lite.
 OPENROUTER_MODEL = (os.getenv("MODEL_NAME", "").strip() or os.getenv(
-    "OPENROUTER_MODEL", "gemini-3.1-flash-lite"
+    "OPENROUTER_MODEL", "deepseek-v4-1-flash-260910"
 )).strip()
 OPENROUTER_URL = (os.getenv("API_BASE_URL", "").strip() or os.getenv("OPENROUTER_BASE_URL", "").strip() or "https://api.apiyi.com/v1").rstrip("/") + "/chat/completions"
 
@@ -2451,6 +2451,8 @@ def request_openrouter(image_bytes, theme, custom_theme, previous_captions, fres
         "max_tokens": 4000,
         "response_format": {"type": "json_object"},
     }
+    if "deepseek" in OPENROUTER_MODEL.lower():
+        payload["reasoning_effort"] = "none"  # DeepSeek thinks first by default; this call has a 60 s read timeout
 
     try:
         response = requests.post(

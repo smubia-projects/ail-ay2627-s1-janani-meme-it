@@ -70,7 +70,7 @@ Meme-it integrates AI into two main parts of its workflow.
 
 **Multimodal Meme Caption Generation**
 
-Gemini (`gemini-3.1-flash-lite` by default), accessed through apiyi, processes the uploaded image together with the selected theme to generate contextually relevant meme captions.
+A vision model (`deepseek-v4-1-flash-260910` by default, set by `MODEL_NAME`), accessed through apiyi, processes the uploaded image together with the selected theme to generate contextually relevant meme captions.
 
 The model can interpret visual context, including expressions, poses, and situations, although it is not a dedicated facial-expression classifier.
 
